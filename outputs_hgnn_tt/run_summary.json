@@ -1,0 +1,107 @@
+{
+  "args": {
+    "data_dir": "huizhuanyao_data",
+    "seq_len": 30,
+    "horizon": 1,
+    "forecast_seconds": 10.0,
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "batch_size": 256,
+    "epochs": 1,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "d_model": 64,
+    "nhead": 4,
+    "num_layers": 2,
+    "ff_dim": 128,
+    "dropout": 0.1,
+    "seed": 42,
+    "output_dir": "outputs_hgnn_tt",
+    "base_interval_seconds": 10.0,
+    "effective_forecast_seconds": 10.0
+  },
+  "best_val_rmse": 0.004245899648781695,
+  "best_checkpoint": "epoch_001_valrmse_0.004246.pt",
+  "topk_checkpoints": [
+    {
+      "epoch": 1,
+      "val_rmse": 0.004245899648781695,
+      "path": "epoch_001_valrmse_0.004246.pt"
+    }
+  ],
+  "training_history_file": "training_history.json",
+  "test_metrics": {
+    "rmse": 0.00950862401155175,
+    "mae": 0.008567697368562222,
+    "mape": 454233.642578125,
+    "r2": -2.768920766018194
+  },
+  "node_order": [
+    "kiln_head",
+    "kiln_tail",
+    "boiler",
+    "esp",
+    "fan",
+    "feed",
+    "co"
+  ],
+  "node_features": {
+    "kiln_head": [
+      15,
+      6,
+      7
+    ],
+    "kiln_tail": [
+      14
+    ],
+    "boiler": [
+      8,
+      9,
+      16
+    ],
+    "esp": [
+      10,
+      11,
+      17,
+      18
+    ],
+    "fan": [
+      12,
+      19
+    ],
+    "feed": [
+      13
+    ],
+    "co": [
+      2
+    ]
+  },
+  "hyperedges": [
+    [
+      "feed",
+      "kiln_head",
+      "kiln_tail",
+      "co"
+    ],
+    [
+      "kiln_head",
+      "kiln_tail",
+      "boiler",
+      "esp",
+      "fan",
+      "co"
+    ],
+    [
+      "kiln_head",
+      "kiln_tail",
+      "boiler",
+      "esp",
+      "co"
+    ],
+    [
+      "feed",
+      "kiln_head",
+      "co"
+    ]
+  ]
+}
