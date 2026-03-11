@@ -1,9 +1,0 @@
-user.name=ljs11528
-user.email=598003084@qq.com
-http.version=HTTP/1.1
-core.repositoryformatversion=0
-core.filemode=true
-core.bare=false
-core.logallrefupdates=true
-remote.origin.url=https://github.com/ljs11528/kiln.git
-remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*
