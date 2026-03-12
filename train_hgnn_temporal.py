@@ -15,7 +15,7 @@ from data_pipeline import (
     build_samples_per_file,
     make_node_inputs,
     read_all_csv,
-    split_dataset,
+    split_file_arrays,
 )
 from hgnn_config import HYPEREDGES, NODE_FEATURES, NODE_ORDER
 from hgnn_temporal_model import HGNNTemporalTransformer, build_incidence
@@ -71,7 +71,7 @@ def evaluate(
             bx = bx.to(device)
             by = by.to(device)
             node_inputs = [t.to(device) for t in make_node_inputs(bx, NODE_FEATURES)]
-            pred = model(node_inputs)
+            pred = model(node_inputs, raw_sequence=bx)
             preds.append(pred.cpu().numpy())
             trues.append(by.cpu().numpy())
 
@@ -90,6 +90,27 @@ def evaluate(
     r2 = 1.0 - (sse / (sst + 1e-12))
 
     return {"rmse": rmse, "mae": mae, "mape": mape, "r2": r2}
+
+
+def collect_predictions_scaled(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+) -> tuple[np.ndarray, np.ndarray]:
+    model.eval()
+    preds = []
+    trues = []
+
+    with torch.no_grad():
+        for bx, by in loader:
+            bx = bx.to(device)
+            by = by.to(device)
+            node_inputs = [t.to(device) for t in make_node_inputs(bx, NODE_FEATURES)]
+            pred = model(node_inputs, raw_sequence=bx)
+            preds.append(pred.cpu().numpy())
+            trues.append(by.cpu().numpy())
+
+    return np.concatenate(preds), np.concatenate(trues)
 
 
 def main() -> None:
@@ -114,6 +135,12 @@ def main() -> None:
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--ff_dim", type=int, default=128)
     parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument(
+        "--co_history_minutes",
+        type=float,
+        default=10.0,
+        help="Length of CO history window (minutes) used in transformer input.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output_dir", type=str, default="outputs_hgnn_tt")
     args = parser.parse_args()
@@ -139,14 +166,47 @@ def main() -> None:
     args.horizon = int(horizon_steps)
     args.base_interval_seconds = float(base_interval_seconds)
     args.effective_forecast_seconds = float(args.horizon * base_interval_seconds)
+    args.co_history_steps = int(max(1, round((args.co_history_minutes * 60.0) / base_interval_seconds)))
+    args.effective_co_history_seconds = float(args.co_history_steps * base_interval_seconds)
 
     print(
         f"Using horizon_steps={args.horizon}, base_interval_seconds={args.base_interval_seconds:.3f}, "
         f"effective_forecast_seconds={args.effective_forecast_seconds:.3f}"
     )
+    print(
+        f"Using co_history_steps={args.co_history_steps}, "
+        f"effective_co_history_seconds={args.effective_co_history_seconds:.3f}"
+    )
 
-    X, y = build_samples_per_file(file_arrays, seq_len=args.seq_len, horizon=args.horizon)
-    splits = split_dataset(X, y, train_ratio=args.train_ratio, val_ratio=args.val_ratio)
+    file_splits = split_file_arrays(
+        file_arrays,
+        train_ratio=args.train_ratio,
+        val_ratio=args.val_ratio,
+    )
+    X_train, y_train = build_samples_per_file(
+        file_splits["train"],
+        seq_len=args.seq_len,
+        horizon=args.horizon,
+    )
+    X_val, y_val = build_samples_per_file(
+        file_splits["val"],
+        seq_len=args.seq_len,
+        horizon=args.horizon,
+    )
+    X_test, y_test = build_samples_per_file(
+        file_splits["test"],
+        seq_len=args.seq_len,
+        horizon=args.horizon,
+    )
+
+    splits = {
+        "X_train": X_train,
+        "y_train": y_train,
+        "X_val": X_val,
+        "y_val": y_val,
+        "X_test": X_test,
+        "y_test": y_test,
+    }
 
     feature_scaler = StandardScaler.fit(splits["X_train"].reshape(-1, splits["X_train"].shape[-1]))
     target_scaler = StandardScaler.fit(splits["y_train"].reshape(-1, 1))
@@ -178,6 +238,8 @@ def main() -> None:
         num_transformer_layers=args.num_layers,
         ff_dim=args.ff_dim,
         dropout=args.dropout,
+        co_col_idx=2,
+        co_history_steps=args.co_history_steps,
     ).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -197,7 +259,7 @@ def main() -> None:
             node_inputs = [t.to(device) for t in make_node_inputs(bx, NODE_FEATURES)]
 
             optimizer.zero_grad()
-            pred = model(node_inputs)
+            pred = model(node_inputs, raw_sequence=bx)
             loss = criterion(pred, by)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -272,6 +334,19 @@ def main() -> None:
     model.load_state_dict(checkpoint["model_state_dict"])
     test_metrics = evaluate(model, test_loader, device, target_scaler)
 
+    val_pred_scaled, val_true_scaled = collect_predictions_scaled(model, val_loader, device)
+    val_pred = target_scaler.inverse_transform(val_pred_scaled.reshape(-1, 1)).reshape(-1)
+    val_true = target_scaler.inverse_transform(val_true_scaled.reshape(-1, 1)).reshape(-1)
+    val_pred_path = output_dir / "val_predictions_best.npz"
+    np.savez(
+        val_pred_path,
+        y_pred=val_pred,
+        y_true=val_true,
+        y_pred_scaled=val_pred_scaled,
+        y_true_scaled=val_true_scaled,
+        checkpoint_name=best_record["path"],
+    )
+
     print("=" * 60)
     print("Best validation RMSE:", f"{best_record['val_rmse']:.6f}")
     print("Saved top-k checkpoints:", json.dumps(topk_records, ensure_ascii=True))
@@ -300,6 +375,7 @@ def main() -> None:
                 "best_checkpoint": best_record["path"],
                 "topk_checkpoints": topk_records,
                 "training_history_file": history_path.name,
+                "val_prediction_file": val_pred_path.name,
                 "test_metrics": test_metrics,
                 "node_order": NODE_ORDER,
                 "node_features": NODE_FEATURES,
@@ -311,6 +387,7 @@ def main() -> None:
         )
 
     print(f"Best model for testing: {best_path}")
+    print(f"Saved validation predictions: {val_pred_path}")
     print(f"Saved history: {history_path}")
     print(f"Saved summary: {output_dir / 'run_summary.json'}")
 

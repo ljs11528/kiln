@@ -34,6 +34,9 @@ NODE_FEATURES: Dict[str, List[int]] = {
         COL_INDEX["whrb_drum_pressure"],
         COL_INDEX["whrb_outlet_pressure"],
         COL_INDEX["whrb_inlet_temp"],
+        COL_INDEX["drum_level_1"],
+        COL_INDEX["drum_level_2"],
+        COL_INDEX["drum_level_3"],
     ],
     "esp": [
         COL_INDEX["esp_inlet_pressure"],
@@ -43,20 +46,17 @@ NODE_FEATURES: Dict[str, List[int]] = {
     ],
     "fan": [COL_INDEX["fan_outlet_pressure"], COL_INDEX["fan_outlet_temp"]],
     "feed": [COL_INDEX["disc_feeder_freq"]],
-    "co": [COL_INDEX["co"]],
 }
 
-NODE_ORDER = ["kiln_head", "kiln_tail", "boiler", "esp", "fan", "feed", "co"]
-CO_NODE_INDEX = NODE_ORDER.index("co")
+NODE_ORDER = ["kiln_head", "kiln_tail", "boiler", "esp", "fan", "feed"]
 
-# Hyperedges:
-# E1 material reaction = {Feed, Kiln head, Kiln tail, CO}
-# E2 gas transport     = {Kiln head, Kiln tail, Boiler, ESP, Fan, CO}
-# E3 thermal field     = {Kiln head, Kiln tail, Boiler, ESP, CO}
-# E4 equipment status  = {Feed, Kiln head, CO}
+# Hyperedges requested by process topology.
 HYPEREDGES = [
-    ["feed", "kiln_head", "kiln_tail", "co"],
-    ["kiln_head", "kiln_tail", "boiler", "esp", "fan", "co"],
-    ["kiln_head", "kiln_tail", "boiler", "esp", "co"],
-    ["feed", "kiln_head", "co"],
+    ["feed", "kiln_head"],
+    ["kiln_head", "kiln_tail"],
+    ["kiln_tail", "boiler"],
+    ["boiler", "esp"],
+    ["esp", "fan"],
+    ["kiln_head", "kiln_tail", "boiler"],
+    ["boiler", "esp", "fan"],
 ]

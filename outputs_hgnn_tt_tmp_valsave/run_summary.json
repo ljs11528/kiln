@@ -17,7 +17,7 @@
     "dropout": 0.1,
     "co_history_minutes": 10.0,
     "seed": 42,
-    "output_dir": "outputs_hgnn_tt",
+    "output_dir": "outputs_hgnn_tt_tmp_valsave",
     "base_interval_seconds": 10.0,
     "effective_forecast_seconds": 300.0,
     "co_history_steps": 60,
@@ -53,6 +53,7 @@
     }
   ],
   "training_history_file": "training_history.json",
+  "val_prediction_file": "val_predictions_best.npz",
   "test_metrics": {
     "rmse": 0.0027288381130273257,
     "mae": 0.0022209847811609507,

@@ -4,8 +4,6 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from hgnn_config import CO_NODE_INDEX
-
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, max_len: int = 4096):
@@ -117,13 +115,17 @@ class HGNNTemporalTransformer(nn.Module):
         num_transformer_layers: int = 2,
         ff_dim: int = 128,
         dropout: float = 0.1,
+        co_col_idx: int = 2,
+        co_history_steps: int = 60,
     ):
         super().__init__()
         self.node_projectors = nn.ModuleList([nn.Linear(d, d_model) for d in node_input_dims])
-        self.temporal_input_proj = nn.Linear(d_model * 2, d_model)
+        self.temporal_input_proj = nn.Linear(d_model + 1, d_model)
         self.pos_encoding = PositionalEncoding(d_model=d_model)
         self.node_attention = nn.Linear(d_model, 1)
         self.time_weight = nn.Linear(d_model, 1)
+        self.co_col_idx = int(co_col_idx)
+        self.co_history_steps = int(max(1, co_history_steps))
 
         self.temporal_encoder = TemporalEncoder(
             d_model=d_model,
@@ -150,8 +152,12 @@ class HGNNTemporalTransformer(nn.Module):
     def forward(
         self,
         node_inputs: List[torch.Tensor],
+        raw_sequence: Optional[torch.Tensor] = None,
         return_attention: bool = False,
     ) -> torch.Tensor | Tuple[torch.Tensor, Dict[str, torch.Tensor | List[torch.Tensor]]]:
+        if raw_sequence is None:
+            raise ValueError("raw_sequence must be provided to build CO_history input.")
+
         projected = []
         for i, node_seq in enumerate(node_inputs):
             x = self.node_projectors[i](node_seq)
@@ -172,14 +178,16 @@ class HGNNTemporalTransformer(nn.Module):
 
         # Node-level attention for per-timestep node importance.
         node_attn = torch.softmax(self.node_attention(h), dim=2)
-        h = h * node_attn
+        global_seq = (h * node_attn).sum(dim=2)
 
-        # Build temporal sequence from CO-node state and global process state.
-        co_seq = h[:, :, CO_NODE_INDEX, :]
-        global_seq = h.sum(dim=2)
-        temporal_in = self.temporal_input_proj(torch.cat([co_seq, global_seq], dim=-1))
+        co_hist = raw_sequence[:, :, self.co_col_idx].unsqueeze(-1)
+        win = min(self.co_history_steps, global_seq.size(1), co_hist.size(1))
+        global_seq = global_seq[:, -win:, :]
+        co_hist = co_hist[:, -win:, :]
+        temporal_src = torch.cat([global_seq, co_hist], dim=-1)
 
         # Temporal second: model dynamics over time after graph reasoning.
+        temporal_in = self.temporal_input_proj(temporal_src)
         temporal_in = self.pos_encoding(temporal_in)
         temporal_h, temporal_attn = self.temporal_encoder(
             temporal_in,

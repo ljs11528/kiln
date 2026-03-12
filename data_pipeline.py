@@ -88,6 +88,29 @@ def build_samples_per_file(
     return X, y
 
 
+def split_file_arrays(
+    file_arrays: List[np.ndarray],
+    train_ratio: float,
+    val_ratio: float,
+) -> Dict[str, List[np.ndarray]]:
+    n_files = len(file_arrays)
+    if n_files < 3:
+        raise ValueError("At least 3 csv files are required to make train/val/test splits.")
+
+    train_end = int(n_files * train_ratio)
+    val_end = int(n_files * (train_ratio + val_ratio))
+
+    # Guarantee every split has at least one file when possible.
+    train_end = min(max(train_end, 1), n_files - 2)
+    val_end = min(max(val_end, train_end + 1), n_files - 1)
+
+    return {
+        "train": file_arrays[:train_end],
+        "val": file_arrays[train_end:val_end],
+        "test": file_arrays[val_end:],
+    }
+
+
 def split_dataset(
     X: np.ndarray,
     y: np.ndarray,

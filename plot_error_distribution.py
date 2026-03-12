@@ -10,7 +10,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from data_pipeline import StandardScaler, SequenceDataset, build_samples_per_file, make_node_inputs, read_all_csv, split_dataset
+from data_pipeline import (
+    StandardScaler,
+    SequenceDataset,
+    build_samples_per_file,
+    make_node_inputs,
+    read_all_csv,
+    split_file_arrays,
+)
 from hgnn_config import HYPEREDGES, NODE_FEATURES, NODE_ORDER
 from hgnn_temporal_model import HGNNTemporalTransformer, build_incidence
 
@@ -41,17 +48,35 @@ def resolve_checkpoint(exp_dir: Path, checkpoint_arg: str | None) -> Path:
 
 def build_scaled_splits(data_dir: Path, train_args: Dict[str, float], feature_scaler: StandardScaler):
     arrays = read_all_csv(data_dir)
-    X, y = build_samples_per_file(
+    file_splits = split_file_arrays(
         arrays,
-        seq_len=int(train_args["seq_len"]),
-        horizon=int(train_args["horizon"]),
-    )
-    splits = split_dataset(
-        X,
-        y,
         train_ratio=float(train_args["train_ratio"]),
         val_ratio=float(train_args["val_ratio"]),
     )
+    X_train, y_train = build_samples_per_file(
+        file_splits["train"],
+        seq_len=int(train_args["seq_len"]),
+        horizon=int(train_args["horizon"]),
+    )
+    X_val, y_val = build_samples_per_file(
+        file_splits["val"],
+        seq_len=int(train_args["seq_len"]),
+        horizon=int(train_args["horizon"]),
+    )
+    X_test, y_test = build_samples_per_file(
+        file_splits["test"],
+        seq_len=int(train_args["seq_len"]),
+        horizon=int(train_args["horizon"]),
+    )
+
+    splits = {
+        "X_train": X_train,
+        "y_train": y_train,
+        "X_val": X_val,
+        "y_val": y_val,
+        "X_test": X_test,
+        "y_test": y_test,
+    }
 
     for key in ["X_train", "X_val", "X_test"]:
         flat = splits[key].reshape(-1, splits[key].shape[-1])
@@ -66,17 +91,25 @@ def predict_scaled(model: HGNNTemporalTransformer, X_split: np.ndarray, batch_si
         bx = ds.features[i : i + batch_size]
         node_inputs = make_node_inputs(bx, NODE_FEATURES)
         with torch.no_grad():
-            pred = model(node_inputs)
+            pred = model(node_inputs, raw_sequence=bx)
         preds.append(pred.cpu().numpy())
     return np.concatenate(preds, axis=0)
 
 
+def resolve_co_history_steps(train_args: Dict[str, float]) -> int:
+    if "co_history_steps" in train_args:
+        return int(train_args["co_history_steps"])
+    base_dt = float(train_args.get("base_interval_seconds", 10.0))
+    hist_minutes = float(train_args.get("co_history_minutes", 10.0))
+    return int(max(1, round((hist_minutes * 60.0) / base_dt)))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot prediction error distribution")
-    parser.add_argument("--exp_dir", type=str, default="outputs_hgnn_tt")
+    parser.add_argument("--exp_dir", type=str, default="outputs_hgnn_tt_tmp_valsave")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--data_dir", type=str, default="huizhuanyao_data")
-    parser.add_argument("--split", type=str, default="test", choices=["train", "val", "test"])
+    parser.add_argument("--split", type=str, default="val", choices=["train", "val", "test"])
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--bins", type=int, default=40)
     parser.add_argument("--out_file", type=str, default="co_error_distribution.png")
@@ -114,6 +147,8 @@ def main() -> None:
         num_transformer_layers=int(train_args["num_layers"]),
         ff_dim=int(train_args["ff_dim"]),
         dropout=float(train_args["dropout"]),
+        co_col_idx=2,
+        co_history_steps=resolve_co_history_steps(train_args),
     )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
